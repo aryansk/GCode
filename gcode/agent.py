@@ -12,6 +12,55 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MAX_HISTORY = 30
 
 
+def _usage_value(usage: dict, *names):
+    """Return the first non-None value among the given keys, so zero counts win."""
+    for name in names:
+        if usage.get(name) is not None:
+            return usage[name]
+    return None
+
+
+def _print_usage(response, ui) -> None:
+    """Print a compact footer with token usage when the provider supplies it.
+
+    Prefers LangChain's ``usage_metadata`` and falls back to
+    ``response_metadata['token_usage' | 'usage']``. Prints nothing when no
+    usage is available and never raises.
+    """
+    try:
+        usage = getattr(response, "usage_metadata", None)
+        if not isinstance(usage, dict) or all(v is None for v in usage.values()):
+            meta = getattr(response, "response_metadata", {}) or {}
+            cand: dict = {}
+            if isinstance(meta, dict):
+                cand = meta.get("token_usage") or meta.get("usage") or {}
+            usage = cand if isinstance(cand, dict) else None
+        if not usage or all(v is None for v in usage.values()):
+            return
+        inp = _usage_value(usage, "input_tokens", "prompt_tokens", "promptTokens")
+        out = _usage_value(usage, "output_tokens", "completion_tokens", "completionTokens")
+        total = _usage_value(usage, "total_tokens", "totalTokens")
+        parts = []
+        if inp is not None and out is not None:
+            parts.append(f"{inp} in / {out} out")
+        elif inp is not None:
+            parts.append(f"{inp} in")
+        elif out is not None:
+            parts.append(f"{out} out")
+        if total is not None:
+            parts.append(f"total {total}")
+        cost = _usage_value(usage, "cost", "total_cost")
+        if cost is not None:
+            try:
+                parts.append(f"~${float(cost):.4f}")
+            except (TypeError, ValueError):
+                parts.append(f"cost {cost}")
+        if parts:
+            ui.info(f"[dim]Usage: {'  ·  '.join(parts)}[/dim]")
+    except Exception:
+        return
+
+
 def build_model(model_id: str, api_key: str):
     """Build a ChatOpenAI model bound to all GCode tools.
 
@@ -82,10 +131,14 @@ def _stream(messages: list, model, ui) -> AIMessage:
     if interrupted:
         ui.info("(streaming stopped by user)")
     # Store the canonical AIMessage (not the chunk) for clean history + reloads.
+    # usage_metadata/response_metadata carry the provider's token counts, which
+    # _print_usage reads; dropping them would make the usage footer always empty.
     return AIMessage(
         content=accumulated.content,
         tool_calls=[] if interrupted else accumulated.tool_calls,
         additional_kwargs=accumulated.additional_kwargs,
+        response_metadata=accumulated.response_metadata,
+        usage_metadata=accumulated.usage_metadata,
         id=accumulated.id,
     )
 
@@ -128,6 +181,7 @@ def run_turn(user_input: str, messages: list, model, ui) -> None:
         return
 
     messages.append(response)
+    _print_usage(response, ui)
 
     errored = False
     while getattr(response, "tool_calls", None):
@@ -149,6 +203,7 @@ def run_turn(user_input: str, messages: list, model, ui) -> None:
             break
 
         messages.append(response)
+        _print_usage(response, ui)
 
     if errored:
         return
