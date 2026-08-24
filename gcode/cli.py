@@ -344,6 +344,17 @@ def main() -> None:
         metavar="DIR",
         help="Run as if started in DIR (like git -C), instead of the current directory.",
     )
+    parser.add_argument(
+        "-p",
+        "--prompt",
+        metavar="TEXT",
+        help="Run one non-interactive turn, print the reply, and exit (no banner/prompt).",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help='With --prompt, print the reply as JSON {"reply": ...}.',
+    )
     args = parser.parse_args()
 
     # Before anything reads the working directory. .gcoderc discovery, the
@@ -403,6 +414,30 @@ def main() -> None:
         ui.info(f"Resumed session '{session}' — {len(messages)} messages.")
 
     state = {"model": model, "model_id": model_id}
+
+    # One-shot non-interactive mode: gcode -p "question" / --prompt
+    if args.prompt is not None:
+        # No banner, no interactive prompt; still load history and config.
+        # Bash tool auto-rejects when not --yes in non-tty (see tools.execute_bash).
+        trim_history(messages)
+        if args.json:
+            import json
+
+            from langchain_core.messages import AIMessage
+
+            run_turn(args.prompt, messages, model, ui)
+            save(session, messages)
+            last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
+            content = last_ai.content if last_ai is not None else ""
+            if isinstance(content, list):
+                content = "".join(
+                    part.get("text", "") if isinstance(part, dict) else str(part) for part in content
+                )
+            print(json.dumps({"reply": content}))
+        else:
+            run_turn(args.prompt, messages, model, ui)
+            save(session, messages)
+        sys.exit(0)
 
     ui.banner(__version__, model_id, session, os.getcwd())
     ui.info("Type /help for commands. Ctrl-D or /quit to exit.\n")
