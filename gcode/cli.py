@@ -302,7 +302,9 @@ def _cmd_ollama(ui: RichUI) -> str:
         selected = questionary.select(
             "Select an Ollama model:",
             choices=choices,
-            instruction="(↑↓ navigate, Enter select, Esc cancel)",
+            instruction="(↑↓ navigate, Enter select, Esc cancel — type to filter)",
+            use_search_filter=True,
+            use_jk_keys=False,
         ).ask()
     except KeyboardInterrupt:
         return ""
