@@ -50,6 +50,15 @@ def execute_bash(command: str) -> str:
     Returns combined stdout and stderr, and reports a non-zero exit code if the
     command fails.
     """
+    # Windows: shell=True invokes cmd.exe, not bash. Detect missing bash and
+    # fail with a clear, actionable message rather than a confusing subprocess
+    # error. See docs/windows.md and issue #54.
+    if os.name == "nt" and not shutil.which("bash"):
+        return (
+            "execute_bash: bash not found on native Windows. GCode's bash tool "
+            "requires bash (use WSL2 or Git Bash). See docs/windows.md for Windows "
+            f"setup. Command was: {command}"
+        )
     if not AUTO_APPROVE:
         try:
             confirm = input(f"GCode wants to run: {command}\nApprove? (y/n): ")
@@ -338,6 +347,11 @@ def git_commit(message: str) -> str:
 
 
 def _git(args: list) -> str:
+    if os.name == "nt" and not shutil.which("git"):
+        return (
+            "git not found on native Windows. Install Git for Windows and ensure "
+            "git is on PATH, or use WSL2/Git Bash. See docs/windows.md."
+        )
     cmd = ["git"] + args
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
