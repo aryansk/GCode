@@ -106,6 +106,8 @@ Write commit messages as a single imperative sentence, no period, under 72 chars
 
 ## Use
 
+> **New to GCode?** See the [User Guide](docs/user-guide.md) for an annotated example session and FAQ.
+
 ```bash
 gcode                            # start a session in the current directory
 gcode --session work             # named, resumable session
