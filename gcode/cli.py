@@ -133,7 +133,9 @@ def _cmd_models(ui: RichUI) -> str:
         selected = questionary.select(
             "Select a model:",
             choices=choices,
-            instruction="(↑↓ navigate, Enter select, Esc cancel)",
+            instruction="(↑↓ navigate, Enter select, Esc cancel — type to filter)",
+            use_search_filter=True,
+            use_jk_keys=False,
         ).ask()
     except KeyboardInterrupt:
         return ""
