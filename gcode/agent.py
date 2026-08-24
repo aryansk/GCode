@@ -8,78 +8,57 @@ from gcode.errors import format_model_error
 from gcode.ollama import OLLAMA_V1_URL
 from gcode.tools import TOOL_MAP, is_auto_approve
 
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+MAX_HISTORY = 30
+
+
+def _usage_value(usage: dict, *names):
+    """Return the first non-None value among the given keys, so zero counts win."""
+    for name in names:
+        if usage.get(name) is not None:
+            return usage[name]
+    return None
+
 
 def _print_usage(response, ui) -> None:
-    """Print a compact footer with token usage when provider supplies it."""
+    """Print a compact footer with token usage when the provider supplies it.
+
+    Prefers LangChain's ``usage_metadata`` and falls back to
+    ``response_metadata['token_usage' | 'usage']``. Prints nothing when no
+    usage is available and never raises.
+    """
     try:
-        usage = None
-        # LangChain 0.3+ stores usage in usage_metadata
-        usage_meta = getattr(response, "usage_metadata", None)
-        if usage_meta:
-            # usage_metadata may be dict or object with input_tokens/output_tokens
-            if isinstance(usage_meta, dict):
-                usage = usage_meta
-            else:
-                usage = {
-                    "input_tokens": getattr(usage_meta, "input_tokens", None),
-                    "output_tokens": getattr(usage_meta, "output_tokens", None),
-                    "total_tokens": getattr(usage_meta, "total_tokens", None),
-                }
-        # Fallback: response_metadata may contain token_usage
-        if not usage or not any(usage.values()):
+        usage = getattr(response, "usage_metadata", None)
+        if not isinstance(usage, dict) or all(v is None for v in usage.values()):
             meta = getattr(response, "response_metadata", {}) or {}
-            # OpenRouter may put usage under response_metadata['usage'] or ['token_usage']
+            cand: dict = {}
             if isinstance(meta, dict):
                 cand = meta.get("token_usage") or meta.get("usage") or {}
-                if isinstance(cand, dict) and cand:
-                    usage = cand
-                # Also check for X-RateLimit headers
-                headers = meta.get("headers") or meta.get("response_headers") or {}
-                if headers and isinstance(headers, dict):
-                    # headers may be case-insensitive
-                    rl_remaining = None
-                    for k in ("x-ratelimit-remaining", "X-RateLimit-Remaining", "ratelimit-remaining"):
-                        if k in headers:
-                            rl_remaining = headers[k]
-                            break
-                    if rl_remaining is not None:
-                        usage = usage or {}
-                        usage["rate_limit_remaining"] = rl_remaining
-        if not usage or not any(v is not None for v in usage.values()):
+            usage = cand if isinstance(cand, dict) else None
+        if not usage or all(v is None for v in usage.values()):
             return
-        # Build compact footer
+        inp = _usage_value(usage, "input_tokens", "prompt_tokens", "promptTokens")
+        out = _usage_value(usage, "output_tokens", "completion_tokens", "completionTokens")
+        total = _usage_value(usage, "total_tokens", "totalTokens")
         parts = []
-        inp = usage.get("input_tokens") or usage.get("prompt_tokens") or usage.get("promptTokens")
-        out = usage.get("output_tokens") or usage.get("completion_tokens") or usage.get("completionTokens")
-        total = usage.get("total_tokens") or usage.get("totalTokens")
-        if inp is not None or out is not None:
-            if inp is not None and out is not None:
-                parts.append(f"{inp} in / {out} out")
-            elif inp is not None:
-                parts.append(f"{inp} in")
-            else:
-                parts.append(f"{out} out")
-            if total is not None:
-                parts.append(f"total {total}")
-        # Cost approx (if available)
-        cost = usage.get("cost") or usage.get("total_cost")
+        if inp is not None and out is not None:
+            parts.append(f"{inp} in / {out} out")
+        elif inp is not None:
+            parts.append(f"{inp} in")
+        elif out is not None:
+            parts.append(f"{out} out")
+        if total is not None:
+            parts.append(f"total {total}")
+        cost = _usage_value(usage, "cost", "total_cost")
         if cost is not None:
             try:
                 parts.append(f"~${float(cost):.4f}")
-            except Exception:
+            except (TypeError, ValueError):
                 parts.append(f"cost {cost}")
-        # Rate limit remaining
-        rl = usage.get("rate_limit_remaining") or usage.get("x-ratelimit-remaining")
-        if rl is not None:
-            parts.append(f"rate-limit remaining: {rl}")
         if parts:
             ui.info(f"[dim]Usage: {'  ·  '.join(parts)}[/dim]")
     except Exception:
-        # Never let usage printing break the turn
         return
-
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-MAX_HISTORY = 30
 
 
 def build_model(model_id: str, api_key: str):
@@ -152,10 +131,14 @@ def _stream(messages: list, model, ui) -> AIMessage:
     if interrupted:
         ui.info("(streaming stopped by user)")
     # Store the canonical AIMessage (not the chunk) for clean history + reloads.
+    # usage_metadata/response_metadata carry the provider's token counts, which
+    # _print_usage reads; dropping them would make the usage footer always empty.
     return AIMessage(
         content=accumulated.content,
         tool_calls=[] if interrupted else accumulated.tool_calls,
         additional_kwargs=accumulated.additional_kwargs,
+        response_metadata=accumulated.response_metadata,
+        usage_metadata=accumulated.usage_metadata,
         id=accumulated.id,
     )
 
