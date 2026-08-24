@@ -164,6 +164,8 @@ any model you pass via `/model` / `--model` / `GCODE_MODEL`. Free models are
 also heavily rate-limited on OpenRouter's shared tier; if you get a `429`,
 wait a moment and retry, or use your own OpenRouter key for higher limits.
 
+See the [model tool-support benchmark](docs/model-tool-support.md) for a reproducible script and curated list of verified tool-capable free models. `/models` flags tool-capable models with `[tools]`.
+
 ## Safety
 
 Bash commands require a `y/n` confirmation by default. Only use `--yes` if you
