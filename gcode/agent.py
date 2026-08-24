@@ -90,19 +90,87 @@ def build_model(model_id: str, api_key: str):
     ).bind_tools(ALL_TOOLS)
 
 
-def trim_history(messages: list) -> None:
-    """Keep the system message plus the most recent MAX_HISTORY messages.
+MAX_HISTORY_TOKENS = 12000  # approx budget for ~30 messages at ~400 tokens each
 
-    Trims only at a settled boundary (between turns) and drops any leading
-    ToolMessages whose owning assistant message was trimmed, so the API never
-    sees an orphaned tool result.
+
+def _estimate_tokens(msg) -> int:
+    """Heuristic token estimate for a message (len//4), with tiktoken if available."""
+    try:
+        content = getattr(msg, "content", "")
+        if isinstance(content, list):
+            # Content may be a list of parts (e.g., for tool calls)
+            text = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part) for part in content
+            )
+        else:
+            text = str(content) if content else ""
+        # Include tool_calls in estimate
+        tool_calls = getattr(msg, "tool_calls", None)
+        if tool_calls:
+            text += str(tool_calls)
+        # Try tiktoken if installed for more accurate count
+        try:
+            import tiktoken  # type: ignore
+
+            enc = tiktoken.get_encoding("cl100k_base")
+            return len(enc.encode(text))
+        except Exception:
+            pass
+        return max(1, len(text) // 4)
+    except Exception:
+        return 100  # fallback small budget
+
+
+def trim_history(messages: list) -> None:
+    """Keep history within message-count and token-budget limits.
+
+    Preserves the system message plus the most recent messages that fit within
+    ``MAX_HISTORY`` and ``MAX_HISTORY_TOKENS``. Trims only at a settled
+    boundary and drops any leading ToolMessages whose owning assistant was
+    trimmed, so the API never sees an orphaned tool result. A single huge
+    tool output is capped at the source (see :func:`gcode.tools.grep`).
     """
-    if len(messages) <= MAX_HISTORY + 1:
+    if len(messages) <= 1:
         return
-    tail = messages[-MAX_HISTORY:]
-    while tail and isinstance(tail[0], ToolMessage):
-        tail.pop(0)
-    messages[:] = [messages[0]] + tail
+    # Fast path: within both limits
+    if len(messages) <= MAX_HISTORY + 1:
+        total = sum(_estimate_tokens(m) for m in messages)
+        if total <= MAX_HISTORY_TOKENS:
+            return
+    # Need to trim: keep system message + most recent that fit
+    # Start from most recent and build backwards within budget
+    system = messages[0]
+    rest = messages[1:]
+    # Enforce count limit first, then token budget
+    if len(rest) > MAX_HISTORY:
+        rest = rest[-MAX_HISTORY:]
+        # Drop leading ToolMessages that would be orphaned
+        while rest and isinstance(rest[0], ToolMessage):
+            rest.pop(0)
+    # Enforce token budget by dropping oldest while over budget
+    # Keep at least one recent turn (2 messages) if possible
+    while rest and sum(_estimate_tokens(m) for m in [system] + rest) > MAX_HISTORY_TOKENS:
+        # Drop oldest message in rest, but avoid orphaning ToolMessages
+        # If oldest is AIMessage with tool_calls, also drop its ToolMessages
+        if len(rest) <= 2:
+            break
+        dropped = rest.pop(0)
+        # If we dropped an AIMessage that had tool_calls, also drop its ToolMessages
+        # that immediately follow (they are now orphaned)
+        while rest and isinstance(rest[0], ToolMessage):
+            # Check if this ToolMessage belonged to the dropped AIMessage
+            # Heuristic: if dropped was AIMessage with tool_calls, drop all leading ToolMessages
+            if getattr(dropped, "tool_calls", None):
+                rest.pop(0)
+            else:
+                break
+            # Avoid dropping too many and breaking the budget loop
+            if not getattr(dropped, "tool_calls", None):
+                break
+    # Final orphan check: ensure rest doesn't start with ToolMessage
+    while rest and isinstance(rest[0], ToolMessage):
+        rest.pop(0)
+    messages[:] = [system] + rest
 
 
 def _stream(messages: list, model, ui) -> AIMessage:
