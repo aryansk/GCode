@@ -165,7 +165,10 @@ class RichUI:
             return
         self._buffer += text
         now = time.monotonic()
-        if len(self._buffer) - self._last_len >= _TRUNCATE_STEP and now - self._last_update >= _TRUNCATE_MIN_INTERVAL:
+        if (
+            len(self._buffer) - self._last_len >= _TRUNCATE_STEP
+            and now - self._last_update >= _TRUNCATE_MIN_INTERVAL
+        ):
             self._live.update(Markdown(self._buffer))
             self._last_len = len(self._buffer)
             self._last_update = now
