@@ -115,8 +115,7 @@ def _estimate_tokens(msg) -> int:
             enc = tiktoken.get_encoding("cl100k_base")
             return len(enc.encode(text))
         except Exception:
-            pass
-        return max(1, len(text) // 4)
+            return max(1, len(text) // 4)  # tiktoken unavailable: heuristic
     except Exception:
         return 100  # fallback small budget
 
