@@ -50,10 +50,13 @@ def execute_bash(command: str) -> str:
     Returns combined stdout and stderr, and reports a non-zero exit code if the
     command fails.
     """
-    # Windows: shell=True invokes cmd.exe, not bash. Detect missing bash and
+    # Windows: shell=True invokes cmd.exe, not bash. If bash is unavailable,
     # fail with a clear, actionable message rather than a confusing subprocess
-    # error. See docs/windows.md and issue #54.
-    if os.name == "nt" and not shutil.which("bash"):
+    # error. When bash exists, run it explicitly so bash syntax works (shell=True
+    # on Windows would still route through cmd.exe). See docs/windows.md and
+    # issue #54.
+    bash = shutil.which("bash")
+    if os.name == "nt" and bash is None:
         return (
             "execute_bash: bash not found on native Windows. GCode's bash tool "
             "requires bash (use WSL2 or Git Bash). See docs/windows.md for Windows "
@@ -72,9 +75,26 @@ def execute_bash(command: str) -> str:
         if confirm.strip().lower() != "y":
             return "Command execution cancelled by user."
     try:
-        result = subprocess.run(  # nosec B602 — execute_bash is the tool's purpose; gated by y/n approval
-            command, shell=True, capture_output=True, text=True, timeout=BASH_TIMEOUT, check=False
-        )
+        # nosec B602 — execute_bash is the tool's purpose; gated by y/n approval.
+        # On Windows, shell=True would invoke cmd.exe; run bash explicitly.
+        if os.name == "nt":
+            assert bash is not None  # presence checked above
+            result = subprocess.run(
+                [bash, "-c", command],
+                capture_output=True,
+                text=True,
+                timeout=BASH_TIMEOUT,
+                check=False,
+            )
+        else:
+            result = subprocess.run(  # nosec B602 — gated by y/n approval
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=BASH_TIMEOUT,
+                check=False,
+            )
     except subprocess.TimeoutExpired:
         return f"Command timed out after {BASH_TIMEOUT}s: {command}"
     except KeyboardInterrupt:
