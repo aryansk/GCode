@@ -78,7 +78,8 @@ def execute_bash(command: str) -> str:
         # nosec B602 — execute_bash is the tool's purpose; gated by y/n approval.
         # On Windows, shell=True would invoke cmd.exe; run bash explicitly.
         if os.name == "nt":
-            assert bash is not None  # presence checked above
+            if bash is None:
+                return "execute_bash: bash not found on native Windows."
             result = subprocess.run(
                 [bash, "-c", command],
                 capture_output=True,
