@@ -110,7 +110,7 @@ def _estimate_tokens(msg) -> int:
             text += str(tool_calls)
         # Try tiktoken if installed for more accurate count
         try:
-            import tiktoken  # type: ignore
+            import tiktoken
 
             enc = tiktoken.get_encoding("cl100k_base")
             return len(enc.encode(text))
@@ -147,26 +147,16 @@ def trim_history(messages: list) -> None:
         # Drop leading ToolMessages that would be orphaned
         while rest and isinstance(rest[0], ToolMessage):
             rest.pop(0)
-    # Enforce token budget by dropping oldest while over budget
-    # Keep at least one recent turn (2 messages) if possible
-    while rest and sum(_estimate_tokens(m) for m in [system] + rest) > MAX_HISTORY_TOKENS:
-        # Drop oldest message in rest, but avoid orphaning ToolMessages
-        # If oldest is AIMessage with tool_calls, also drop its ToolMessages
-        if len(rest) <= 2:
+    # Enforce token budget by dropping oldest while over budget.
+    # Keep at least one recent turn (2 messages) if possible.
+    while len(rest) > 2:
+        if sum(_estimate_tokens(m) for m in [system] + rest) <= MAX_HISTORY_TOKENS:
             break
         dropped = rest.pop(0)
-        # If we dropped an AIMessage that had tool_calls, also drop its ToolMessages
-        # that immediately follow (they are now orphaned)
-        while rest and isinstance(rest[0], ToolMessage):
-            # Check if this ToolMessage belonged to the dropped AIMessage
-            # Heuristic: if dropped was AIMessage with tool_calls, drop all leading ToolMessages
-            if getattr(dropped, "tool_calls", None):
+        # Dropping an AIMessage that issued tool calls orphans its ToolMessages.
+        if getattr(dropped, "tool_calls", None):
+            while rest and isinstance(rest[0], ToolMessage):
                 rest.pop(0)
-            else:
-                break
-            # Avoid dropping too many and breaking the budget loop
-            if not getattr(dropped, "tool_calls", None):
-                break
     # Final orphan check: ensure rest doesn't start with ToolMessage
     while rest and isinstance(rest[0], ToolMessage):
         rest.pop(0)
